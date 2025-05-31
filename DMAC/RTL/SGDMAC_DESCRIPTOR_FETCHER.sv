@@ -3,12 +3,12 @@ module SGDMAC_DESCRIPTOR_FETCHER
     input   wire            clk,
     input   wire            rst_n,
 
-    //config
+    // Control interface signals
     input   wire    [31:0]  start_pointer_i,
     input   wire            start_i,
     output  wire            done_o,
 
-    // AXI [AR channel]
+    // AXI Read Address Channel Interface
     output  wire    [3:0]       arid_o,
     output  wire    [31:0]      araddr_o,
     output  wire    [3:0]       arlen_o,
@@ -17,7 +17,7 @@ module SGDMAC_DESCRIPTOR_FETCHER
     output  wire                arvalid_o,
     input   wire                arready_i,
 
-    // AXI [R channel]
+    // AXI Read Data Channel Interface
     input   wire    [3:0]       rid_i,
     input   wire    [31:0]      rdata_i,
     input   wire    [1:0]       rresp_i,
@@ -25,96 +25,109 @@ module SGDMAC_DESCRIPTOR_FETCHER
     input   wire                rvalid_i,
     output  wire                rready_o,
 
-    // FIFO Write interface
+    // Command FIFO Output Interface
     input   wire                afull_i,
     output  wire                wren_o,
-    output  wire    [47:0]      wdata_o, // {address(32), length(16)}
+    output  wire    [47:0]      wdata_o, // {memory_address(32), transfer_length(16)}
     output  wire                rw_o
 );
 
-localparam                  S_IDLE      =   2'd0,
-                            S_RREQ      =   2'd1,
-                            S_RDATA     =   2'd2,
-                            S_FIFO      =   2'd3;
-localparam                  DESCRIPTOR_LEN  =   128;
+// State machine encoding
+localparam                  STATE_IDLE          =   2'd0,
+                            STATE_READ_REQUEST  =   2'd1,
+                            STATE_READ_DATA     =   2'd2,
+                            STATE_FIFO_WRITE    =   2'd3;
 
-reg [1:0]                   cnt, cnt_n; // 3 ~ 0
-reg [1:0]                   state, state_n;
-reg [31:0]                  start_pointer, start_pointer_n;
-reg [31:0]                  init_ptr; // to detect end descriptor
-reg [31:0]                  rdata[4]; // store when fifo is full
-reg                         arvalid, rready, done;
-reg                         fifo_wren, delayed;
+// Descriptor parameters
+localparam                  DESCRIPTOR_SIZE_BYTES  =   128;
 
+// State machine and control registers
+reg [1:0]                   current_state, next_state;
+reg [1:0]                   data_word_counter, next_data_word_counter; 
+reg [31:0]                  current_descriptor_ptr, next_descriptor_ptr;
+reg [31:0]                  initial_descriptor_ptr; // Reference for loop detection
+reg [31:0]                  descriptor_data[4]; // 4-word descriptor storage
+
+// Control signal generation
+reg                         address_valid, data_ready, operation_complete;
+reg                         fifo_write_enable, processing_delayed;
+
+// Sequential logic block
 always_ff @(posedge clk)begin
     if(!rst_n)begin
-        state           <=  S_IDLE;
-        cnt             <=  'd0;
-        start_pointer   <=  'd0;
+        current_state           <=  STATE_IDLE;
+        data_word_counter       <=  'd0;
+        current_descriptor_ptr  <=  'd0;
     end
     else begin
-        state           <=  state_n;
-        cnt             <=  cnt_n;
-        start_pointer   <=  start_pointer_n;
+        current_state           <=  next_state;
+        data_word_counter       <=  next_data_word_counter;
+        current_descriptor_ptr  <=  next_descriptor_ptr;
     end 
 end
 
+// Combinational logic for state machine and control
 always_comb begin
-    state_n             =   state;
+    next_state                  =   current_state;
+    next_descriptor_ptr         =   current_descriptor_ptr;
 
-    start_pointer_n     =   start_pointer;
-
-    arvalid                 = 1'b0;
-    rready                  = 1'b0;
-    done                    = 1'b0;
+    address_valid               = 1'b0;
+    data_ready                  = 1'b0;
+    operation_complete          = 1'b0;
     
-    fifo_wren               = 1'b0;
-    cnt_n                   = cnt;
+    fifo_write_enable           = 1'b0;
+    next_data_word_counter      = data_word_counter;
     
-    case (state)
-        S_IDLE:begin
-            done            = 1'b1;
+    case (current_state)
+        STATE_IDLE:begin
+            operation_complete      = 1'b1;
             if(start_i) begin
-                start_pointer_n = start_pointer_i;
-                init_ptr        = start_pointer_i;
-                state_n         = S_RREQ;
+                next_descriptor_ptr = start_pointer_i;
+                initial_descriptor_ptr = start_pointer_i;
+                next_state          = STATE_READ_REQUEST;
             end
         end 
-        S_RREQ: begin
-            arvalid         = 1'b1;
+        STATE_READ_REQUEST: begin
+            address_valid           = 1'b1;
             if(arready_i) begin
-                state_n     =   S_RDATA;
-                cnt_n           = 'd3;
+                next_state          = STATE_READ_DATA;
+                next_data_word_counter = 'd3;
             end
         end
-        S_RDATA: begin
-            rready          = 1'b1;
+        STATE_READ_DATA: begin
+            data_ready              = 1'b1;
             if(rvalid_i) begin
-                rdata[cnt]          = rdata_i;
-                cnt_n               = cnt - 1;
-               // $display("rdata[cnt]: %x, cnt: %d\n", rdata[cnt], cnt_n);
-                if(rlast_i)begin// not last
-                    fifo_wren       = 1'b1;
-                    start_pointer_n = rdata_i;
-                    state_n         = (rdata_i == init_ptr)? S_IDLE : S_RREQ;
+                descriptor_data[data_word_counter] = rdata_i;
+                next_data_word_counter = data_word_counter - 1;
+                if(rlast_i)begin
+                    fifo_write_enable   = 1'b1;
+                    next_descriptor_ptr = rdata_i;
+                    next_state = (rdata_i == initial_descriptor_ptr) ? STATE_IDLE : STATE_READ_REQUEST;
                 end
             end 
         end
-        default: begin end
+        default: begin 
+            // Default case handling
+        end
     endcase
 end 
 
-assign done_o               =   done;
+// Output signal assignments
+assign done_o               =   operation_complete;
 
-assign arvalid_o            =   arvalid;
-assign araddr_o             =   start_pointer;
-assign arlen_o              =   4'd3;   // 4 times
-assign arsize_o             =   3'b010; // 4bytes per transfer
-assign arburst_o            =   2'b01; //incremental
+// AXI Read Address Channel outputs
+assign arvalid_o            =   address_valid;
+assign araddr_o             =   current_descriptor_ptr;
+assign arlen_o              =   4'd3;   // 4 AXI transactions for descriptor
+assign arsize_o             =   3'b010; // 4 bytes per AXI transaction
+assign arburst_o            =   2'b01;  // Incremental burst mode
 
-assign rready_o             =   rready;
+// AXI Read Data Channel outputs
+assign rready_o             =   data_ready;
 
-assign wren_o               =   fifo_wren;
-assign wdata_o              =   {rdata[3], rdata[2][15:0]};
-assign rw_o                 =   rdata[1][0];
+// Command FIFO interface outputs
+assign wren_o               =   fifo_write_enable;
+assign wdata_o              =   {descriptor_data[3], descriptor_data[2][15:0]};
+assign rw_o                 =   descriptor_data[1][0];
+
 endmodule

@@ -59,14 +59,17 @@ module SGDMAC_TOP
     output  wire                rready_o
 );
 
-wire    [31:0]      cfg_start_pointer;
-wire                cfg_start, cfg_done;
-SGDMAC_CFG      u_cfg
+// Configuration interface signals
+wire    [31:0]      configuration_start_ptr;
+wire                configuration_trigger, operation_completed;
+
+// Configuration register module instantiation
+SGDMAC_CFG      configuration_unit
 (
     .clk            (clk),
-    .rst_n          (rst_n),  // _n means active low
+    .rst_n          (rst_n),
 
-    // AMBA APB interface
+    // APB interface connection
     .psel_i         (psel_i),
     .penable_i      (penable_i),
     .paddr_i        (paddr_i),
@@ -76,237 +79,260 @@ SGDMAC_CFG      u_cfg
     .prdata_o       (prdata_o),
     .pslverr_o      (pslverr_o),
 
-    // configuration registers
-    .start_pointer_o(cfg_start_pointer),
-    .start_o        (cfg_start),
-    .done_i         (cfg_done)
+    // control signals
+    .start_pointer_o(configuration_start_ptr),
+    .start_o        (configuration_trigger),
+    .done_i         (operation_completed)
 );
 
-/* DONE */
-wire                desc_done;
-/* ARBITER */
-localparam      N_CH    =   2;
-wire    [3:0]               arid_vec[N_CH];
-assign  {arid_vec[1], arid_vec[0]}  =   {4'd1, 4'd0};
-wire    [31:0]              araddr_vec[N_CH];
-wire    [3:0]               arlen_vec[N_CH];
-wire    [2:0]               arsize_vec[N_CH];
-wire    [1:0]               arburst_vec[N_CH];
-wire                        arvalid_vec[N_CH];
-wire                        arready_vec[N_CH];
-wire                        rready_vec[N_CH];
+// Descriptor processing completion flag
+wire                descriptor_fetch_complete;
 
-assign rready_o =   rready_vec[rid_i];
+// Channel arbitration parameters
+localparam      CHANNEL_COUNT    =   2;
+wire    [3:0]               read_id_array[CHANNEL_COUNT];
+assign  {read_id_array[1], read_id_array[0]}  =   {4'd1, 4'd0};
 
-/* CMD FIFO */
-localparam      CMD_DATA_LEN    =   48;
-wire                        cmd_fifo_wren;
-wire   [CMD_DATA_LEN-1:0]   cmd_fifo_wdata;
-wire                        cmd_rw;
+wire    [31:0]              read_addr_array[CHANNEL_COUNT];
+wire    [3:0]               read_len_array[CHANNEL_COUNT];
+wire    [2:0]               read_size_array[CHANNEL_COUNT];
+wire    [1:0]               read_burst_array[CHANNEL_COUNT];
+wire                        read_valid_array[CHANNEL_COUNT];
+wire                        read_ready_array[CHANNEL_COUNT];
+wire                        read_resp_ready_array[CHANNEL_COUNT];
 
-wire                        read_cmd_fifo_wren,
-                            read_cmd_fifo_empty,
-                            read_cmd_fifo_rden;
-wire    [CMD_DATA_LEN - 1:0] read_cmd_fifo_rdata;
+assign rready_o =   read_resp_ready_array[rid_i];
 
-wire                        write_cmd_fifo_wren,
-                            write_cmd_fifo_empty,
-                            write_cmd_fifo_rden;
-wire    [CMD_DATA_LEN - 1:0] write_cmd_fifo_rdata;
+// Command FIFO parameters and signals
+localparam      COMMAND_WIDTH    =   48;
+wire                        command_fifo_write_enable;
+wire   [COMMAND_WIDTH-1:0]  command_fifo_write_data;
+wire                        command_operation_type;
 
-assign  read_cmd_fifo_wren  =   (~cmd_rw)&cmd_fifo_wren;
-assign  write_cmd_fifo_wren =   cmd_rw&cmd_fifo_wren;
-/* DATA FIFO */
-localparam      DATA_FIFO_DEPTH =   128;
-wire                        data_fifo_afull,
-                            data_fifo_wren,
-                            data_fifo_empty,
-                            data_fifo_rden;
-wire    [31:0]              data_fifo_wdata, data_fifo_rdata;
-wire    [$clog2(DATA_FIFO_DEPTH):0]   data_fifo_cnt;
+// Read command FIFO signals
+wire                        rd_cmd_fifo_wr_en,
+                            rd_cmd_fifo_is_empty,
+                            rd_cmd_fifo_rd_en;
+wire    [COMMAND_WIDTH - 1:0] rd_cmd_fifo_rd_data;
 
-// ARBITER [AR channel]
+// Write command FIFO signals
+wire                        wr_cmd_fifo_wr_en,
+                            wr_cmd_fifo_is_empty,
+                            wr_cmd_fifo_rd_en;
+wire    [COMMAND_WIDTH - 1:0] wr_cmd_fifo_rd_data;
+
+// Command FIFO demultiplexer logic
+assign  rd_cmd_fifo_wr_en  =   (~command_operation_type) & command_fifo_write_enable;
+assign  wr_cmd_fifo_wr_en  =   command_operation_type & command_fifo_write_enable;
+
+// Data buffer parameters and signals
+localparam      BUFFER_DEPTH =   128;
+wire                        buffer_almost_full,
+                            buffer_write_enable,
+                            buffer_is_empty,
+                            buffer_read_enable;
+wire    [31:0]              buffer_write_data, buffer_read_data;
+wire    [$clog2(BUFFER_DEPTH):0]   buffer_usage_count;
+
+// Read channel arbiter instantiation
 SGDMAC_ARBITER #(
-    .N_MASTER      (N_CH),
+    .N_MASTER      (CHANNEL_COUNT),
     .DATA_SIZE     ($bits(arid_o) + $bits(araddr_o) + $bits(arlen_o) + $bits(arsize_o) + $bits(arburst_o))
 )
-u_ar_arbiter
+read_channel_arbiter
 (
     .clk            (clk),
     .rst_n          (rst_n),
 
+    // Output to AXI read address channel
     .dst_valid_o    (arvalid_o),
     .dst_ready_i    (arready_i),
     .dst_data_o     ({arid_o, araddr_o, arlen_o, arsize_o, arburst_o}),
 
-    .data_reader_valid_i(arvalid_vec[1]),
-    .data_reader_ready_o(arready_vec[1]),
-    .data_reader_data_i ({arid_vec[1], araddr_vec[1], arlen_vec[1], arsize_vec[1], arburst_vec[1]}),
+    // Data reader channel input
+    .data_reader_valid_i(read_valid_array[1]),
+    .data_reader_ready_o(read_ready_array[1]),
+    .data_reader_data_i ({read_id_array[1], read_addr_array[1], read_len_array[1], read_size_array[1], read_burst_array[1]}),
 
-    .descriptor_valid_i(arvalid_vec[0]),
-    .descriptor_ready_o(arready_vec[0]),
-    .descriptor_data_i ({arid_vec[0], araddr_vec[0], arlen_vec[0], arsize_vec[0], arburst_vec[0]})
+    // Descriptor fetcher channel input
+    .descriptor_valid_i(read_valid_array[0]),
+    .descriptor_ready_o(read_ready_array[0]),
+    .descriptor_data_i ({read_id_array[0], read_addr_array[0], read_len_array[0], read_size_array[0], read_burst_array[0]})
 );
 
-// Descriptor Fetcher
-SGDMAC_DESCRIPTOR_FETCHER u_descriptor_fetcher
+// Descriptor management unit
+SGDMAC_DESCRIPTOR_FETCHER descriptor_management_unit
 (
     .clk            (clk),
     .rst_n          (rst_n),
 
-    .start_pointer_i(cfg_start_pointer),
-    .start_i        (cfg_start),
-    .done_o         (desc_done),
+    // Configuration inputs
+    .start_pointer_i(configuration_start_ptr),
+    .start_i        (configuration_trigger),
+    .done_o         (descriptor_fetch_complete),
 
+    // AXI read address channel (unused ID)
     .arid_o         (),
-    .araddr_o       (araddr_vec[0]),
-    .arlen_o        (arlen_vec[0]),   
-    .arsize_o       (arsize_vec[0]),   
-    .arburst_o      (arburst_vec[0]),   
-    .arvalid_o      (arvalid_vec[0]),   
-    .arready_i      (arready_vec[0]), 
+    .araddr_o       (read_addr_array[0]),
+    .arlen_o        (read_len_array[0]),   
+    .arsize_o       (read_size_array[0]),   
+    .arburst_o      (read_burst_array[0]),   
+    .arvalid_o      (read_valid_array[0]),   
+    .arready_i      (read_ready_array[0]), 
     
+    // AXI read data channel (unused ID)
     .rid_i          (),
     .rdata_i        (rdata_i),
     .rresp_i        (rresp_i),
     .rlast_i        (rlast_i),
     .rvalid_i       (rvalid_i),
-    .rready_o       (rready_vec[0]),
+    .rready_o       (read_resp_ready_array[0]),
 
+    // Command FIFO interface (unused almost full)
     .afull_i        (),
-    .wren_o         (cmd_fifo_wren),
-    .wdata_o        (cmd_fifo_wdata),
-    .rw_o           (cmd_rw)
+    .wren_o         (command_fifo_write_enable),
+    .wdata_o        (command_fifo_write_data),
+    .rw_o           (command_operation_type)
 );
 
+// Read command buffer
 SGDMAC_FIFO #(
     .FIFO_DEPTH (16),
-    .DATA_WIDTH (CMD_DATA_LEN),
+    .DATA_WIDTH (COMMAND_WIDTH),
     .AFULL_THRESHOLD (16),
     .AEMPTY_THRESHOLD (0)
 )
-u_cmd_read_fifo
+read_command_buffer
 (
     .clk            (clk),
     .rst_n          (rst_n),
 
     .full_o         (),
     .afull_o        (),
-    .wren_i         (read_cmd_fifo_wren),
-    .wdata_i        (cmd_fifo_wdata),
+    .wren_i         (rd_cmd_fifo_wr_en),
+    .wdata_i        (command_fifo_write_data),
 
-    .empty_o        (read_cmd_fifo_empty),
+    .empty_o        (rd_cmd_fifo_is_empty),
     .aempty_o       (),
-    .rden_i         (read_cmd_fifo_rden),
-    .rdata_o        (read_cmd_fifo_rdata),
+    .rden_i         (rd_cmd_fifo_rd_en),
+    .rdata_o        (rd_cmd_fifo_rd_data),
     .cnt_o          ()
 );
 
+// Write command buffer
 SGDMAC_FIFO #(
     .FIFO_DEPTH (16),
-    .DATA_WIDTH (CMD_DATA_LEN),
+    .DATA_WIDTH (COMMAND_WIDTH),
     .AFULL_THRESHOLD (16),
     .AEMPTY_THRESHOLD (0)
 )
-u_cmd_write_fifo
+write_command_buffer
 (
     .clk            (clk),
     .rst_n          (rst_n),
 
     .full_o         (),
     .afull_o        (),
-    .wren_i         (write_cmd_fifo_wren),
-    .wdata_i        (cmd_fifo_wdata),
+    .wren_i         (wr_cmd_fifo_wr_en),
+    .wdata_i        (command_fifo_write_data),
 
-    .empty_o        (write_cmd_fifo_empty),
+    .empty_o        (wr_cmd_fifo_is_empty),
     .aempty_o       (),
-    .rden_i         (write_cmd_fifo_rden),
-    .rdata_o        (write_cmd_fifo_rdata),
+    .rden_i         (wr_cmd_fifo_rd_en),
+    .rdata_o        (wr_cmd_fifo_rd_data),
     .cnt_o          ()
 );
 
-
-// MAX: 15 * 128byte -> 15 * 32 entries
+// Main data storage buffer
 SGDMAC_FIFO #(
-    .FIFO_DEPTH (DATA_FIFO_DEPTH),
+    .FIFO_DEPTH (BUFFER_DEPTH),
     .DATA_WIDTH (32),
-    .AFULL_THRESHOLD (DATA_FIFO_DEPTH),
+    .AFULL_THRESHOLD (BUFFER_DEPTH),
     .AEMPTY_THRESHOLD (0)
 )
-u_data_fifo
+primary_data_buffer
 (
     .clk            (clk),
     .rst_n          (rst_n),
 
     .full_o         (),
-    .afull_o        (data_fifo_afull),
-    .wren_i         (data_fifo_wren),
-    .wdata_i        (data_fifo_wdata),
+    .afull_o        (buffer_almost_full),
+    .wren_i         (buffer_write_enable),
+    .wdata_i        (buffer_write_data),
 
-    .empty_o        (data_fifo_empty),
+    .empty_o        (buffer_is_empty),
     .aempty_o       (),
-    .rden_i         (data_fifo_rden),
-    .rdata_o        (data_fifo_rdata),
-    .cnt_o          (data_fifo_cnt)
+    .rden_i         (buffer_read_enable),
+    .rdata_o        (buffer_read_data),
+    .cnt_o          (buffer_usage_count)
 );
 
-//DEMUX
-wire            rw;
-wire[47:0]      reader_cmd, writer_cmd;
-wire            reader_done, writer_done;
-wire            reader_start, writer_start;
+// Command demultiplexer and control signals
+wire            operation_mode;
+wire[47:0]      read_engine_command, write_engine_command;
+wire            read_engine_idle, write_engine_idle;
+wire            read_engine_trigger, write_engine_trigger;
 
-assign reader_cmd   =   read_cmd_fifo_rdata;
-assign writer_cmd   =   write_cmd_fifo_rdata;
-assign reader_start =   reader_done & !read_cmd_fifo_empty;
-assign writer_start =   writer_done & !write_cmd_fifo_empty;
-assign write_cmd_fifo_rden= writer_start;
-assign read_cmd_fifo_rden= reader_start;
+assign read_engine_command   =   rd_cmd_fifo_rd_data;
+assign write_engine_command  =   wr_cmd_fifo_rd_data;
+assign read_engine_trigger   =   read_engine_idle & (!rd_cmd_fifo_is_empty);
+assign write_engine_trigger  =   write_engine_idle & (!wr_cmd_fifo_is_empty);
+assign wr_cmd_fifo_rd_en = write_engine_trigger;
+assign rd_cmd_fifo_rd_en = read_engine_trigger;
 
-assign cfg_done    =    desc_done & reader_done & writer_done & read_cmd_fifo_empty & write_cmd_fifo_empty & data_fifo_empty;
+// Overall operation completion logic
+assign operation_completed = descriptor_fetch_complete & read_engine_idle & write_engine_idle & 
+                           rd_cmd_fifo_is_empty & wr_cmd_fifo_is_empty & buffer_is_empty;
 
+// Data read engine instantiation
 SGDMAC_READ #(
-    .FIFO_DEPTH     (DATA_FIFO_DEPTH)
+    .FIFO_DEPTH     (BUFFER_DEPTH)
 )   
-u_reader
+data_read_engine
 (
     .clk            (clk),
     .rst_n          (rst_n),
     
+    // AXI read address channel (unused ID)
     .arid_o         (),
-    .araddr_o       (araddr_vec[1]),
-    .arlen_o        (arlen_vec[1]),   
-    .arsize_o       (arsize_vec[1]),   
-    .arburst_o      (arburst_vec[1]),   
-    .arvalid_o      (arvalid_vec[1]),   
-    .arready_i      (arready_vec[1]), 
+    .araddr_o       (read_addr_array[1]),
+    .arlen_o        (read_len_array[1]),   
+    .arsize_o       (read_size_array[1]),   
+    .arburst_o      (read_burst_array[1]),   
+    .arvalid_o      (read_valid_array[1]),   
+    .arready_i      (read_ready_array[1]), 
     
+    // AXI read data channel (unused ID)
     .rid_i          (),
     .rdata_i        (rdata_i),
     .rresp_i        (rresp_i),
     .rlast_i        (rlast_i),
     .rvalid_i       (rvalid_i),
-    .rready_o       (rready_vec[1]),
+    .rready_o       (read_resp_ready_array[1]),
 
-    .start_i        (reader_start),
-    .desc_done_i    (desc_done),
-    .cmd_i          (reader_cmd),
-    .done_o         (reader_done),
+    // Control interface
+    .start_i        (read_engine_trigger),
+    .desc_done_i    (descriptor_fetch_complete),
+    .cmd_i          (read_engine_command),
+    .done_o         (read_engine_idle),
 
-    .fifo_afull_i   (data_fifo_afull),
-    .fifo_cnt_i     (data_fifo_cnt), 
-    .fifo_wren_o    (data_fifo_wren),
-    .fifo_wdata_o   (data_fifo_wdata)
+    // Buffer interface
+    .fifo_afull_i   (buffer_almost_full),
+    .fifo_cnt_i     (buffer_usage_count), 
+    .fifo_wren_o    (buffer_write_enable),
+    .fifo_wdata_o   (buffer_write_data)
 );
 
+// Data write engine instantiation
 SGDMAC_WRITE #(
-    .FIFO_DEPTH     (DATA_FIFO_DEPTH)
+    .FIFO_DEPTH     (BUFFER_DEPTH)
 )   
-u_writer
+data_write_engine
 (
     .clk            (clk),
     .rst_n          (rst_n),
 
+    // AXI write address channel (unused ID)
     .awid_o         (),
     .awaddr_o       (awaddr_o),
     .awlen_o        (awlen_o),
@@ -315,6 +341,7 @@ u_writer
     .awvalid_o      (awvalid_o),
     .awready_i      (awready_i),
 
+    // AXI write data channel
     .wid_o          (wid_o),
     .wdata_o        (wdata_o),
     .wstrb_o        (wstrb_o),
@@ -322,19 +349,21 @@ u_writer
     .wvalid_o       (wvalid_o),
     .wready_i       (wready_i),
 
+    // AXI write response channel (unused ID)
     .bid_i          (),
     .bresp_i        (bresp_i),
     .bvalid_i       (bvalid_i),
     .bready_o       (bready_o),
 
-    .start_i        (writer_start),
-    .cmd_i          (writer_cmd),
-    .done_o         (writer_done),
+    // Control interface
+    .start_i        (write_engine_trigger),
+    .cmd_i          (write_engine_command),
+    .done_o         (write_engine_idle),
 
-    .fifo_empty_i   (data_fifo_empty),
-    .fifo_rdata_i   (data_fifo_rdata),
-    .fifo_rden_o    (data_fifo_rden)
+    // Buffer interface
+    .fifo_empty_i   (buffer_is_empty),
+    .fifo_rdata_i   (buffer_read_data),
+    .fifo_rden_o    (buffer_read_enable)
 );
-
 
 endmodule
