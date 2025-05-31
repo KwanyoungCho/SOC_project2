@@ -221,6 +221,7 @@ u_cmd_write_fifo
     .aempty_o       (),
     .rden_i         (write_cmd_fifo_rden),
     .rdata_o        (write_cmd_fifo_rdata),
+    .cnt_o          ()
 );
 
 
