@@ -26,33 +26,50 @@ module SGDMAC_ARBITER
     input   wire    [DATA_SIZE-1:0]     descriptor_data_i
 );
 
-    reg                     channel, channel_n; //1:data reader, 0: descriptor
-    wire                    rcvd;
-    assign rcvd                 =   dst_valid_o & dst_ready_i;
-
+    // Optimized channel selection - single bit register
+    reg     channel_select;  // 0: descriptor, 1: data_reader
+    
+    // Optimized transaction completion detection
+    wire    handshake_complete = dst_valid_o & dst_ready_i;
+    
+    // Priority logic for channel switching
+    wire    switch_to_data_reader = ~channel_select & data_reader_valid_i;
+    wire    switch_to_descriptor  = channel_select & descriptor_valid_i;
+    
+    // Optimized channel arbitration logic
     always_ff @(posedge clk) begin
         if(!rst_n) begin
-            channel <= 1'd0;
+            channel_select <= 1'b0;  // Start with descriptor channel
         end
-        else begin
-            channel <= channel_n;
+        else if(handshake_complete | ~dst_valid_o) begin
+            // Round-robin with priority to data_reader when both are valid
+            if(data_reader_valid_i & descriptor_valid_i) begin
+                channel_select <= ~channel_select;  // Toggle for fairness
+            end
+            else if(switch_to_data_reader) begin
+                channel_select <= 1'b1;
+            end
+            else if(switch_to_descriptor) begin
+                channel_select <= 1'b0;
+            end
         end
     end
 
-    always_comb begin 
-        channel_n   =   channel;
-        if(rcvd || ~dst_valid_o)begin
-            case(channel)
-            0: channel_n    =   (data_reader_valid_i)?1:0;
-            1: channel_n    =   (descriptor_valid_i)?0:1;
-            endcase
+    // Optimized output multiplexing - reduced logic depth
+    always_comb begin
+        if(channel_select) begin
+            // Data reader selected
+            dst_valid_o         = data_reader_valid_i;
+            dst_data_o          = data_reader_data_i;
+            data_reader_ready_o = dst_ready_i;
+            descriptor_ready_o  = 1'b0;
+        end else begin
+            // Descriptor selected
+            dst_valid_o         = descriptor_valid_i;
+            dst_data_o          = descriptor_data_i;
+            data_reader_ready_o = 1'b0;
+            descriptor_ready_o  = dst_ready_i;
         end
     end
-
-    assign  data_reader_ready_o =   (channel == 1)?dst_ready_i:0;
-    assign  descriptor_ready_o  =   (channel == 0)?dst_ready_i:0;
-    assign  dst_data_o          =   (channel)?data_reader_data_i:descriptor_data_i;
-    assign  dst_valid_o         =   (channel)?data_reader_valid_i:descriptor_valid_i;
-
 
 endmodule
