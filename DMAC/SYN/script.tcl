@@ -15,8 +15,8 @@ analyze -format sverilog $env(LAB_PATH)/RTL/SGDMAC_FIFO.sv
 analyze -format sverilog $env(LAB_PATH)/RTL/SGDMAC_TOP.sv
 analyze -format sverilog $env(LAB_PATH)/RTL/SGDMAC_CFG.sv
 analyze -format sverilog $env(LAB_PATH)/RTL/SGDMAC_DESCRIPTOR_FETCHER.sv
-analyze -format sverilog $env(LAB_PATH)/RTL/SGDMAC_DATA_READER.sv
-analyze -format sverilog $env(LAB_PATH)/RTL/SGDMAC_DATA_WRITER.sv
+analyze -format sverilog $env(LAB_PATH)/RTL/SGDMAC_READ.sv
+analyze -format sverilog $env(LAB_PATH)/RTL/SGDMAC_WRITE.sv
 analyze -format sverilog $env(LAB_PATH)/RTL/SGDMAC_ARBITER.sv
 
 set design_name         SGDMAC_TOP
