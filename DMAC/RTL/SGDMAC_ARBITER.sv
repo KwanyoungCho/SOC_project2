@@ -26,41 +26,33 @@ module SGDMAC_ARBITER
     input   wire    [DATA_SIZE-1:0]     descriptor_data_i
 );
 
-    // Channel selection state registers
-    reg                     active_channel, next_active_channel; 
-    // Channel encoding: 1=data_reader, 0=descriptor_fetcher
-    
-    // Transaction completion detection
-    wire                    transaction_complete;
-    assign transaction_complete = dst_valid_o && dst_ready_i;
+    reg                     channel, channel_n; //1:data reader, 0: descriptor
+    wire                    rcvd;
+    assign rcvd                 =   dst_valid_o & dst_ready_i;
 
-    // Sequential logic for channel state update
     always_ff @(posedge clk) begin
         if(!rst_n) begin
-            active_channel <= 1'd0;
+            channel <= 1'd0;
         end
         else begin
-            active_channel <= next_active_channel;
+            channel <= channel_n;
         end
     end
 
-    // Combinational logic for next channel selection
     always_comb begin 
-        next_active_channel = active_channel;
-        
-        // Switch channel when transaction completes or output is idle
-        if(transaction_complete || (~dst_valid_o)) begin
-            case(active_channel)
-            1'b0: next_active_channel = (data_reader_valid_i) ? 1'b1 : 1'b0;
-            1'b1: next_active_channel = (descriptor_valid_i) ? 1'b0 : 1'b1;
+        channel_n   =   channel;
+        if(rcvd || ~dst_valid_o)begin
+            case(channel)
+            0: channel_n    =   (data_reader_valid_i)?1:0;
+            1: channel_n    =   (descriptor_valid_i)?0:1;
             endcase
         end
     end
 
-    // Output interface assignments with channel multiplexing
-    assign  data_reader_ready_o = (active_channel == 1'b1) ? dst_ready_i : 1'b0;
-    assign  descriptor_ready_o  = (active_channel == 1'b0) ? dst_ready_i : 1'b0;
-    assign  dst_data_o          = (active_channel) ? data_reader_data_i : descriptor_data_i;
-    assign  dst_valid_o         = (active_channel) ? data_reader_valid_i : descriptor_valid_i;
+    assign  data_reader_ready_o =   (channel == 1)?dst_ready_i:0;
+    assign  descriptor_ready_o  =   (channel == 0)?dst_ready_i:0;
+    assign  dst_data_o          =   (channel)?data_reader_data_i:descriptor_data_i;
+    assign  dst_valid_o         =   (channel)?data_reader_valid_i:descriptor_valid_i;
+
 
 endmodule

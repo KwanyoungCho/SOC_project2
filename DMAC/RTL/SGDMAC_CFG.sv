@@ -24,64 +24,61 @@ module SGDMAC_CFG
     input   wire                done_i
 );
 
-    // Internal configuration storage registers
-    reg [31:0]                      descriptor_start_address;
-    reg [31:0]                      control_register;
+    //config regs
+    reg [31:0]                      start_pointer;
+    reg [31:0]                      ctrl;
 
-    // Register address map definitions
-    localparam DESCRIPTOR_PTR_ADDR    =       12'h100;
-    localparam CONTROL_REG_ADDR       =       12'h104;
-    localparam STATUS_REG_ADDR        =       12'h108;
-    localparam VERSION_REG_ADDR       =       12'h000;
-    localparam HARDWARE_VERSION       =       32'h01012024;
+    localparam DMA_START    =       12'h100;
+    localparam DMA_CONTROL  =       12'h104;
+    localparam DMA_STATUS   =       12'h108;
+    localparam DMA_VERSION  =       12'h000;
+    localparam VERSION      =       32'h01012024;
 
-    // APB write transaction detection
-    wire    write_transaction_active;
-    assign write_transaction_active = psel_i && penable_i && pwrite_i;
+    //APB WRITE
+    //wren: PSEL, PENABLE, PWRITE
+    wire    wren;
+    assign wren             =       psel_i & penable_i & pwrite_i;
 
-    // Configuration register update logic
     always_ff @(posedge clk) begin
         if(!rst_n) begin
-            descriptor_start_address <= 32'd0;
-            control_register         <= 32'd0;
+            start_pointer <= 32'd0;
+            ctrl          <= 32'd0;
         end
-        else if(write_transaction_active) begin
+        else if(wren) begin
             case ( paddr_i )
-                DESCRIPTOR_PTR_ADDR: descriptor_start_address <= pwdata_i; 
-                CONTROL_REG_ADDR:    control_register         <= {31'd0, pwdata_i[0]}; 
-                default: begin 
-                    // No operation for unrecognized addresses
-                end
+                DMA_START: start_pointer    <= pwdata_i; 
+                DMA_CONTROL: ctrl           <= {31'd0, pwdata_i[0]}; 
+                default: begin end
             endcase
         end
     end
 
-    // Start signal generation logic
-    assign start_o          = (paddr_i == CONTROL_REG_ADDR) && write_transaction_active && pwdata_i[0];
-    assign start_pointer_o  = descriptor_start_address;
+    //START: write 1 to DMA_CMD
+    assign start_o          =           (paddr_i == DMA_CONTROL) & wren & pwdata_i[0];
+    assign start_pointer_o  =           start_pointer;
 
-    // Read data preparation register
-    reg[31:0]       read_data_buffer;
-    
-    // APB read transaction handling
+    reg[31:0]       rdata;
+    //APB READ
+    // PSEL, PENABLE, !PWRITE
+    // setup: PSEL & !PENABLE
     always_ff @(posedge clk) begin
         if(!rst_n) begin
-            read_data_buffer <= 32'd0;
+            rdata <= 32'd0;
         end
-        else if (psel_i && (!penable_i)) begin
+        else if (psel_i & !penable_i)begin
             case(paddr_i)
-            VERSION_REG_ADDR    :   read_data_buffer   <=  HARDWARE_VERSION;
-            DESCRIPTOR_PTR_ADDR :   read_data_buffer   <=  descriptor_start_address;
-            CONTROL_REG_ADDR    :   read_data_buffer   <=  control_register;
-            STATUS_REG_ADDR     :   read_data_buffer   <=  {31'd0, done_i};
-            default             :   read_data_buffer   <=  32'd0;
+            DMA_VERSION :   rdata   <=  VERSION;
+            DMA_START   :   rdata   <=  start_pointer;
+            DMA_CONTROL :   rdata   <=  ctrl;
+            DMA_STATUS  :   rdata   <=  {31'd0, done_i};
+            default     :   rdata   <=  32'd0;
             endcase
         end
     end
 
-    // APB interface output assignments
     assign  pready_o        =   1'b1;
-    assign  prdata_o        =   read_data_buffer;
+    assign  prdata_o        =   rdata;
     assign  pslverr_o       =   1'b0;
+
 
 endmodule
