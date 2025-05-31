@@ -199,6 +199,7 @@ u_cmd_read_fifo
     .aempty_o       (),
     .rden_i         (read_cmd_fifo_rden),
     .rdata_o        (read_cmd_fifo_rdata),
+    .cnt_o          ()
 );
 
 SGDMAC_FIFO #(
