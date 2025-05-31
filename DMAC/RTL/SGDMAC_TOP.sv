@@ -134,8 +134,9 @@ wire                        buffer_almost_full,
 wire    [31:0]              buffer_write_data, buffer_read_data;
 wire    [$clog2(BUFFER_DEPTH):0]   buffer_usage_count;
 
-// Read channel arbiter instantiation - updated for optimized module
+// Read channel arbiter instantiation
 SGDMAC_ARBITER #(
+    .N_MASTER      (CHANNEL_COUNT),
     .DATA_SIZE     ($bits(arid_o) + $bits(araddr_o) + $bits(arlen_o) + $bits(arsize_o) + $bits(arburst_o))
 )
 read_channel_arbiter
