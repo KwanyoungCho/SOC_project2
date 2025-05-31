@@ -24,7 +24,7 @@ module SGDMAC_READ #(
 
     // Command Interface from Descriptor Unit
     input   wire                start_i,
-    input   wire                desc_done_i,
+    input   wire                dt_done_i,
     input   wire    [47:0]      cmd_i,  // {source_address(32), byte_count(16)}
     output  wire                done_o, // indicates idle state
 
@@ -51,7 +51,7 @@ wire                data_handshake = rvalid_i & rready_o;
 wire                burst_complete = data_handshake & rlast_i;
 
 // Optimized FIFO space check - parallel comparison
-wire                sufficient_space = (fifo_cnt_i >= arlen_o + 1) | desc_done_i;
+wire                sufficient_space = (fifo_cnt_i >= arlen_o + 1) | dt_done_i;
 
 // Burst length calculation - optimized for common case
 wire [3:0]          calc_arlen = (remain_bytes >= 16'd64) ? 4'hF : (remain_bytes[5:2] - 4'h1);
