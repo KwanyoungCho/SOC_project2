@@ -21,7 +21,8 @@ module SGDMAC_FIFO #(
     output  wire                        empty_o,
     output  wire                        aempty_o,
     input   wire                        rden_i,
-    output  wire    [DATA_WIDTH-1:0]    rdata_o
+    output  wire    [DATA_WIDTH-1:0]    rdata_o,
+    output  wire    [$clog2(FIFO_DEPTH):0]  cnt_o
 );
 
     localparam  DEPTH_LG2               = $clog2(FIFO_DEPTH);
@@ -110,5 +111,6 @@ module SGDMAC_FIFO #(
     assign  empty_o                     = empty;
     assign  aempty_o                    = aempty;
     assign  rdata_o                     = data[rdptr[DEPTH_LG2-1:0]];
+    assign  cnt_o                       = FIFO_DEPTH - counter;
 
 endmodule
