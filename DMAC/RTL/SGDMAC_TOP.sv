@@ -59,17 +59,18 @@ module SGDMAC_TOP
     output  wire                rready_o
 );
 
-// Optimized parameters
-localparam  N_CH        = 2;
-localparam  CMD_WIDTH   = 48;
-localparam  BUF_DEPTH   = 128;
-localparam  AR_DATA_W   = $bits(arid_o) + $bits(araddr_o) + $bits(arlen_o) + $bits(arsize_o) + $bits(arburst_o);
-
-// Configuration signals - direct connection
+// Configuration signals
 wire    [31:0]  cfg_start_ptr;
 wire            cfg_trigger, cfg_done;
 
-// Channel vectors - optimized layout
+// Descriptor processing
+wire            desc_done;
+
+// Channel arbitration - exactly like original
+localparam  N_CH = 2;
+wire    [3:0]   arid_vec[N_CH];
+assign  {arid_vec[1], arid_vec[0]} = {4'd1, 4'd0};
+
 wire    [31:0]  araddr_vec[N_CH];
 wire    [3:0]   arlen_vec[N_CH];
 wire    [2:0]   arsize_vec[N_CH];
@@ -78,44 +79,41 @@ wire            arvalid_vec[N_CH];
 wire            arready_vec[N_CH];
 wire            rready_vec[N_CH];
 
-// Command FIFO signals - streamlined
+// CRITICAL: Must use full rid_i like original
+assign rready_o = rready_vec[rid_i];
+
+// Command FIFO signals
+localparam  CMD_WIDTH = 48;
 wire            cmd_wr_en;
 wire [CMD_WIDTH-1:0] cmd_wr_data;
 wire            cmd_rw;
-wire            rd_cmd_empty, wr_cmd_empty;
-wire            rd_cmd_rd_en, wr_cmd_rd_en;
-wire [CMD_WIDTH-1:0] rd_cmd_data, wr_cmd_data;
 
-// Data buffer signals - optimized
-wire            buf_afull, buf_empty;
-wire            buf_wr_en, buf_rd_en;
-wire [31:0]     buf_wr_data, buf_rd_data;
+wire            rd_cmd_wr_en, rd_cmd_empty, rd_cmd_rd_en;
+wire [CMD_WIDTH-1:0] rd_cmd_data;
+wire            wr_cmd_wr_en, wr_cmd_empty, wr_cmd_rd_en;
+wire [CMD_WIDTH-1:0] wr_cmd_data;
+
+// Command demux
+assign rd_cmd_wr_en = (~cmd_rw) & cmd_wr_en;
+assign wr_cmd_wr_en = cmd_rw & cmd_wr_en;
+
+// Data buffer signals
+localparam  BUF_DEPTH = 128;
+wire        buf_afull, buf_empty;
+wire        buf_wr_en, buf_rd_en;
+wire [31:0] buf_wr_data, buf_rd_data;
 wire [$clog2(BUF_DEPTH):0] buf_cnt;
 
-// Engine status - direct
-wire            desc_done;
-wire            rd_idle, wr_idle;
-
-// Optimized ID assignment - compile-time constant
-assign  {arid_o, araddr_o, arlen_o, arsize_o, arburst_o} = 
-        arvalid_vec[1] ? {4'd1, araddr_vec[1], arlen_vec[1], arsize_vec[1], arburst_vec[1]} :
-                        {4'd0, araddr_vec[0], arlen_vec[0], arsize_vec[0], arburst_vec[0]};
-
-// Optimized ready mux - single LUT
-assign rready_o = rready_vec[rid_i[0]];
-
-// Engine control - optimized logic depth
-wire rd_start = rd_idle & ~rd_cmd_empty;
-wire wr_start = wr_idle & ~wr_cmd_empty;
+// Engine control
+wire        rd_idle, wr_idle;
+wire        rd_start = rd_idle & ~rd_cmd_empty;
+wire        wr_start = wr_idle & ~wr_cmd_empty;
 assign rd_cmd_rd_en = rd_start;
 assign wr_cmd_rd_en = wr_start;
 
-// Command demux - single gate delay
-assign rd_cmd_wr_en = ~cmd_rw & cmd_wr_en;
-assign wr_cmd_wr_en = cmd_rw & cmd_wr_en;
-
-// Operation completion - optimized AND tree
-assign cfg_done = &{desc_done, rd_idle, wr_idle, rd_cmd_empty, wr_cmd_empty, buf_empty};
+// Operation completion
+assign cfg_done = desc_done & rd_idle & wr_idle & 
+                  rd_cmd_empty & wr_cmd_empty & buf_empty;
 
 // Configuration register
 SGDMAC_CFG u_cfg (
@@ -134,8 +132,11 @@ SGDMAC_CFG u_cfg (
     .done_i         (cfg_done)
 );
 
-// Read channel arbiter - simplified
-SGDMAC_ARBITER #(.DATA_SIZE(AR_DATA_W)) u_arbiter (
+// CRITICAL: Arbiter must control outputs - NOT direct assign
+SGDMAC_ARBITER #(
+    .N_MASTER   (N_CH),
+    .DATA_SIZE  ($bits(arid_o) + $bits(araddr_o) + $bits(arlen_o) + $bits(arsize_o) + $bits(arburst_o))
+) u_arbiter (
     .clk                    (clk),
     .rst_n                  (rst_n),
     .dst_valid_o            (arvalid_o),
@@ -143,10 +144,10 @@ SGDMAC_ARBITER #(.DATA_SIZE(AR_DATA_W)) u_arbiter (
     .dst_data_o             ({arid_o, araddr_o, arlen_o, arsize_o, arburst_o}),
     .data_reader_valid_i    (arvalid_vec[1]),
     .data_reader_ready_o    (arready_vec[1]),
-    .data_reader_data_i     ({4'd1, araddr_vec[1], arlen_vec[1], arsize_vec[1], arburst_vec[1]}),
+    .data_reader_data_i     ({arid_vec[1], araddr_vec[1], arlen_vec[1], arsize_vec[1], arburst_vec[1]}),
     .descriptor_valid_i     (arvalid_vec[0]),
     .descriptor_ready_o     (arready_vec[0]),
-    .descriptor_data_i      ({4'd0, araddr_vec[0], arlen_vec[0], arsize_vec[0], arburst_vec[0]})
+    .descriptor_data_i      ({arid_vec[0], araddr_vec[0], arlen_vec[0], arsize_vec[0], arburst_vec[0]})
 );
 
 // Descriptor fetcher
@@ -175,9 +176,13 @@ SGDMAC_DESCRIPTOR_FETCHER u_desc (
     .rw_o           (cmd_rw)
 );
 
-// Command FIFOs - parallel instantiation
-SGDMAC_FIFO #(.FIFO_DEPTH(16), .DATA_WIDTH(CMD_WIDTH), .AFULL_THRESHOLD(16), .AEMPTY_THRESHOLD(0))
-u_rd_cmd_fifo (
+// Command FIFOs
+SGDMAC_FIFO #(
+    .FIFO_DEPTH     (16),
+    .DATA_WIDTH     (CMD_WIDTH),
+    .AFULL_THRESHOLD(16),
+    .AEMPTY_THRESHOLD(0)
+) u_rd_cmd_fifo (
     .clk    (clk),
     .rst_n  (rst_n),
     .full_o (),
@@ -191,8 +196,12 @@ u_rd_cmd_fifo (
     .cnt_o  ()
 );
 
-SGDMAC_FIFO #(.FIFO_DEPTH(16), .DATA_WIDTH(CMD_WIDTH), .AFULL_THRESHOLD(16), .AEMPTY_THRESHOLD(0))
-u_wr_cmd_fifo (
+SGDMAC_FIFO #(
+    .FIFO_DEPTH     (16),
+    .DATA_WIDTH     (CMD_WIDTH),
+    .AFULL_THRESHOLD(16),
+    .AEMPTY_THRESHOLD(0)
+) u_wr_cmd_fifo (
     .clk    (clk),
     .rst_n  (rst_n),
     .full_o (),
@@ -206,9 +215,13 @@ u_wr_cmd_fifo (
     .cnt_o  ()
 );
 
-// Data buffer - optimized depth
-SGDMAC_FIFO #(.FIFO_DEPTH(BUF_DEPTH), .DATA_WIDTH(32), .AFULL_THRESHOLD(BUF_DEPTH-8), .AEMPTY_THRESHOLD(0))
-u_data_fifo (
+// CRITICAL: AFULL threshold must match original
+SGDMAC_FIFO #(
+    .FIFO_DEPTH     (BUF_DEPTH),
+    .DATA_WIDTH     (32),
+    .AFULL_THRESHOLD(BUF_DEPTH),  // Same as original!
+    .AEMPTY_THRESHOLD(0)
+) u_data_fifo (
     .clk    (clk),
     .rst_n  (rst_n),
     .full_o (),
@@ -222,7 +235,7 @@ u_data_fifo (
     .cnt_o  (buf_cnt)
 );
 
-// Read engine - optimized
+// Read engine
 SGDMAC_READ #(.FIFO_DEPTH(BUF_DEPTH)) u_reader (
     .clk        (clk),
     .rst_n      (rst_n),
@@ -249,7 +262,7 @@ SGDMAC_READ #(.FIFO_DEPTH(BUF_DEPTH)) u_reader (
     .fifo_wdata_o(buf_wr_data)
 );
 
-// Write engine - optimized
+// Write engine
 SGDMAC_WRITE #(.FIFO_DEPTH(BUF_DEPTH)) u_writer (
     .clk        (clk),
     .rst_n      (rst_n),
