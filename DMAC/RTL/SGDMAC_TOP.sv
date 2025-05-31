@@ -64,7 +64,8 @@ localparam  WIDTH = 48;
 localparam  DEPTH = 128;
 
 wire    [31:0]  cfg_start_ptr;
-wire            cfg_trigger, cfg_done;
+wire            cfg_trigger;
+wire            cfg_done;
 wire            dt_done;
 wire    [3:0]   arid_bus[N];
 wire    [31:0]  araddr_bus[N];
@@ -79,9 +80,9 @@ wire            cmd_wr_en;
 wire [WIDTH-1:0] cmd_wr_data;
 wire            cmd_rw;
 
-wire            rd_cmd_wr_en, rd_cmd_empty, rd_cmd_rd_en;
+wire            rd_cmd_wr_en, rd_cmd_empty, rd_en;
 wire [WIDTH-1:0] rd_cmd_data;
-wire            wr_cmd_wr_en, wr_cmd_empty, wr_cmd_rd_en;
+wire            wr_cmd_wr_en, wr_cmd_empty, wr_en;
 wire [WIDTH-1:0] wr_cmd_data;
 
 wire        buf_afull, buf_empty;
@@ -90,17 +91,15 @@ wire [31:0] buf_wr_data, buf_rd_data;
 wire [$clog2(DEPTH):0] buf_cnt;
 
 wire        rd_idle, wr_idle;
-wire        rd_start = rd_idle & ~rd_cmd_empty;
-wire        wr_start = wr_idle & ~wr_cmd_empty;
 
+assign rd_en = rd_idle & ~rd_cmd_empty;
+assign wr_en = wr_idle & ~wr_cmd_empty;
 
 assign {arid_bus[1], arid_bus[0]} = {4'd1, 4'd0};
 assign rready_o = rready_bus[rid_i];
 assign rd_cmd_wr_en = (~cmd_rw) & cmd_wr_en;
 assign wr_cmd_wr_en = cmd_rw & cmd_wr_en;
 
-assign rd_cmd_rd_en = rd_start;
-assign wr_cmd_rd_en = wr_start;
 
 assign cfg_done = dt_done & rd_idle & wr_idle & 
                   rd_cmd_empty & wr_cmd_empty & buf_empty;
@@ -177,7 +176,7 @@ SGDMAC_FIFO #(
     .wdata_i(cmd_wr_data),
     .empty_o(rd_cmd_empty),
     .aempty_o(),
-    .rden_i (rd_cmd_rd_en),
+    .rden_i (rd_en),
     .rdata_o(rd_cmd_data),
     .cnt_o  ()
 );
@@ -196,7 +195,7 @@ SGDMAC_FIFO #(
     .wdata_i(cmd_wr_data),
     .empty_o(wr_cmd_empty),
     .aempty_o(),
-    .rden_i (wr_cmd_rd_en),
+    .rden_i (wr_en),
     .rdata_o(wr_cmd_data),
     .cnt_o  ()
 );
@@ -236,7 +235,7 @@ SGDMAC_READ #(.FIFO_DEPTH(DEPTH)) i6 (
     .rlast_i    (rlast_i),
     .rvalid_i   (rvalid_i),
     .rready_o   (rready_bus[1]),
-    .start_i    (rd_start),
+    .start_i    (rd_en),
     .dt_done_i  (dt_done),
     .cmd_i      (rd_cmd_data),
     .done_o     (rd_idle),
@@ -266,7 +265,7 @@ SGDMAC_WRITE #(.FIFO_DEPTH(DEPTH)) i7 (
     .bresp_i    (bresp_i),
     .bvalid_i   (bvalid_i),
     .bready_o   (bready_o),
-    .start_i    (wr_start),
+    .start_i    (wr_en),
     .cmd_i      (wr_cmd_data),
     .done_o     (wr_idle),
     .fifo_empty_i(buf_empty),
