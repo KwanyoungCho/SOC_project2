@@ -5,8 +5,6 @@ module SGDMAC_WRITE #(
     input   wire            clk,
     input   wire            rst_n,
 
-    // AXI Write Address Channel Interface
-    output  wire    [3:0]   awid_o,
     output  wire    [31:0]  awaddr_o,
     output  wire    [3:0]   awlen_o,
     output  wire    [2:0]   awsize_o,
@@ -14,7 +12,6 @@ module SGDMAC_WRITE #(
     output  wire            awvalid_o,
     input   wire            awready_i,
 
-    // AXI Write Data Channel Interface
     output  wire    [3:0]       wid_o,
     output  wire    [31:0]      wdata_o,
     output  wire    [3:0]       wstrb_o,
@@ -22,51 +19,36 @@ module SGDMAC_WRITE #(
     output  wire                wvalid_o,
     input   wire                wready_i,
 
-    // AXI Write Response Channel Interface
-    input   wire    [3:0]       bid_i,
-    input   wire    [1:0]       bresp_i,
     input   wire                bvalid_i,
     output  wire                bready_o,
 
-    // Command Interface from Descriptor Unit
     input   wire                start_i,
-    input   wire    [47:0]      cmd_i, // {destination_address(32), byte_count(16)}
-    output  wire                done_o, // indicates idle state
+    input   wire    [47:0]      cmd_i,
+    output  wire                done_o,
 
-    // Data Buffer Read Interface
     input   wire                fifo_empty_i,
-    input   wire    [31:0]     fifo_rdata_i, // 4-byte data words
+    input   wire    [31:0]      fifo_rdata_i,
     output  wire                fifo_rden_o
 );
 
-// Optimized state encoding
 localparam                      IDLE        = 2'b00,
                                 ADDR_REQ    = 2'b01,
                                 DATA_TX     = 2'b10,
                                 RESP_WAIT   = 2'b11;
 
-// State and control registers
 reg [1:0]                       state;
 reg [15:0]                      remain_bytes;
 reg [3:0]                       burst_cnt;
 reg [31:0]                      dst_addr;
 
-// Optimized handshake detection
 wire                            aw_handshake = awvalid_o & awready_i;
 wire                            w_handshake  = wvalid_o & wready_i;
 wire                            b_handshake  = bvalid_i & bready_o;
-
-// Burst control signals
 wire                            is_last_beat = (burst_cnt == 4'd0);
 wire                            burst_done   = w_handshake & is_last_beat;
-
-// Burst length calculation - optimized
 wire [3:0]                      calc_awlen = (remain_bytes >= 16'd64) ? 4'hF : (remain_bytes[5:2] - 4'h1);
-
-// Data availability check
 wire                            data_available = ~fifo_empty_i;
 
-// Sequential state machine
 always_ff @(posedge clk) begin
     if(!rst_n) begin
         state        <= IDLE;
@@ -112,7 +94,6 @@ always_ff @(posedge clk) begin
     end
 end
 
-// Optimized output assignments
 assign done_o    = (state == IDLE);
 assign awvalid_o = (state == ADDR_REQ);
 assign wvalid_o  = (state == DATA_TX) & data_available;
@@ -120,14 +101,12 @@ assign wlast_o   = (state == DATA_TX) & is_last_beat;
 assign bready_o  = (state == DATA_TX) | (state == RESP_WAIT);
 assign fifo_rden_o = w_handshake;
 
-// AXI Address Channel
 assign awaddr_o  = dst_addr;
 assign awlen_o   = calc_awlen;
-assign awsize_o  = 3'b010;     // 4 bytes
-assign awburst_o = 2'b01;      // INCR
+assign awsize_o  = 3'b010;
+assign awburst_o = 2'b01;
 
-// AXI Write Data Channel - direct connections for timing
 assign wdata_o   = fifo_rdata_i;
-assign wstrb_o   = 4'b1111;    // All bytes valid
+assign wstrb_o   = 4'b1111;
 
 endmodule

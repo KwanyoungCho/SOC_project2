@@ -9,7 +9,7 @@ module SGDMAC_ARBITER
 )
 (
     input   wire                clk,
-    input   wire                rst_n,  // _n means active low
+    input   wire                rst_n,
 
     // output
     output  reg                 dst_valid_o,
@@ -17,58 +17,49 @@ module SGDMAC_ARBITER
     output  reg     [DATA_SIZE-1:0] dst_data_o,
 
     // input
-    input   wire                data_reader_valid_i,
-    output  reg                 data_reader_ready_o,
-    input   wire    [DATA_SIZE-1:0]     data_reader_data_i,
+    input   wire                rm_vlid_i,
+    output  reg                 rm_ready_o,
+    input   wire    [DATA_SIZE-1:0]     rm_data_i,
 
-    input   wire                descriptor_valid_i,
-    output  reg                 descriptor_ready_o,
-    input   wire    [DATA_SIZE-1:0]     descriptor_data_i
+    input   wire                dt_valid_i,
+    output  reg                 dt_ready_o,
+    input   wire    [DATA_SIZE-1:0]     dt_data_i
 );
 
-    // Optimized channel selection - single bit register
-    reg     channel_select;  // 0: descriptor, 1: data_reader
+    reg     ch_select;
     
-    // Optimized transaction completion detection
-    wire    handshake_complete = dst_valid_o & dst_ready_i;
+    wire    handshake_complete = dst_valid_o & dst_ready_i;    
+    wire    switch_to_rm = ~ch_select & rm_vlid_i;
+    wire    switch_to_dt  = ch_select & dt_valid_i;
     
-    // Priority logic for channel switching
-    wire    switch_to_data_reader = ~channel_select & data_reader_valid_i;
-    wire    switch_to_descriptor  = channel_select & descriptor_valid_i;
-    
-    // Optimized channel arbitration logic
     always_ff @(posedge clk) begin
         if(!rst_n) begin
-            channel_select <= 1'b0;  // Start with descriptor channel
+            ch_select <= 1'b0;
         end
         else if(handshake_complete | ~dst_valid_o) begin
-            // Round-robin with priority to data_reader when both are valid
-            if(data_reader_valid_i & descriptor_valid_i) begin
-                channel_select <= ~channel_select;  // Toggle for fairness
+            if(rm_vlid_i & dt_valid_i) begin
+                ch_select <= ~ch_select;
             end
-            else if(switch_to_data_reader) begin
-                channel_select <= 1'b1;
+            else if(switch_to_rm) begin
+                ch_select <= 1'b1;
             end
-            else if(switch_to_descriptor) begin
-                channel_select <= 1'b0;
+            else if(switch_to_dt) begin
+                ch_select <= 1'b0;
             end
         end
     end
 
-    // Optimized output multiplexing - reduced logic depth
     always_comb begin
-        if(channel_select) begin
-            // Data reader selected
-            dst_valid_o         = data_reader_valid_i;
-            dst_data_o          = data_reader_data_i;
-            data_reader_ready_o = dst_ready_i;
-            descriptor_ready_o  = 1'b0;
+        if(ch_select) begin
+            dst_valid_o         = rm_vlid_i;
+            dst_data_o          = rm_data_i;
+            rm_ready_o = dst_ready_i;
+            dt_ready_o  = 1'b0;
         end else begin
-            // Descriptor selected
-            dst_valid_o         = descriptor_valid_i;
-            dst_data_o          = descriptor_data_i;
-            data_reader_ready_o = 1'b0;
-            descriptor_ready_o  = dst_ready_i;
+            dst_valid_o         = dt_valid_i;
+            dst_data_o          = dt_data_i;
+            rm_ready_o = 1'b0;
+            dt_ready_o  = dst_ready_i;
         end
     end
 

@@ -37,11 +37,10 @@ module SGDMAC_FIFO #(
                                         rdptr,      rdptr_n;
     reg     [DEPTH_LG2:0]               counter,    counter_n;
 
-    // reset entries to all 0s
     always_ff @(posedge clk)
         if (!rst_n) begin
             full                        <= 1'b0;
-            empty                       <= 1'b1;    // empty after as reset
+            empty                       <= 1'b1;
 
             wrptr                       <= {(DEPTH_LG2+1){1'b0}};
             rdptr                       <= {(DEPTH_LG2+1){1'b0}};
@@ -89,21 +88,21 @@ module SGDMAC_FIFO #(
     end
 
    // synthesis translate_off
-   always @(posedge clk) begin
-       if (full_o & wren_i) begin
-           $display("FIFO overflow");
-           @(posedge clk);
-           $finish;
-       end
-   end
+//    always @(posedge clk) begin
+//        if (full_o & wren_i) begin
+//            $display("FIFO overflow");
+//            @(posedge clk);
+//            $finish;
+//        end
+//    end
 
-   always @(posedge clk) begin
-       if (empty_o & rden_i) begin
-           $display("FIFO underflow");
-           @(posedge clk);
-           $finish;
-       end
-   end
+//    always @(posedge clk) begin
+//        if (empty_o & rden_i) begin
+//            $display("FIFO underflow");
+//            @(posedge clk);
+//            $finish;
+//        end
+//    end
    // synthesis translate_on
 
     assign  full_o                      = full;

@@ -63,8 +63,8 @@ localparam  N = 2;
 localparam  WIDTH = 48;
 localparam  DEPTH = 128;
 
-wire    [31:0]  cfg_start_ptr;
-wire            cfg_trigger;
+wire    [31:0]  cfg_ptr;
+wire            cfg_starter;
 wire            cfg_done;
 wire            dt_done;
 wire    [3:0]   arid_bus[N];
@@ -100,7 +100,6 @@ assign rready_o = rready_bus[rid_i];
 assign rd_cmd_wr_en = (~cmd_rw) & cmd_wr_en;
 assign wr_cmd_wr_en = cmd_rw & cmd_wr_en;
 
-
 assign cfg_done = dt_done & rd_idle & wr_idle & 
                   rd_cmd_empty & wr_cmd_empty & buf_empty;
 
@@ -115,13 +114,12 @@ SGDMAC_CFG i0 (
     .pready_o       (pready_o),
     .prdata_o       (prdata_o),
     .pslverr_o      (pslverr_o),
-    .start_pointer_o(cfg_start_ptr),
-    .start_o        (cfg_trigger),
+    .start_pointer_o(cfg_ptr),
+    .start_o        (cfg_starter),
     .done_i         (cfg_done)
 );
 
 SGDMAC_ARBITER #(
-    .N_MASTER   (N),
     .DATA_SIZE  ($bits(arid_o) + $bits(araddr_o) + $bits(arlen_o) + $bits(arsize_o) + $bits(arburst_o))
 ) i1 (
     .clk                    (clk),
@@ -129,34 +127,31 @@ SGDMAC_ARBITER #(
     .dst_valid_o            (arvalid_o),
     .dst_ready_i            (arready_i),
     .dst_data_o             ({arid_o, araddr_o, arlen_o, arsize_o, arburst_o}),
-    .data_reader_valid_i    (arvalid_bus[1]),
-    .data_reader_ready_o    (arready_bus[1]),
-    .data_reader_data_i     ({arid_bus[1], araddr_bus[1], arlen_bus[1], arsize_bus[1], arburst_bus[1]}),
-    .descriptor_valid_i     (arvalid_bus[0]),
-    .descriptor_ready_o     (arready_bus[0]),
-    .descriptor_data_i      ({arid_bus[0], araddr_bus[0], arlen_bus[0], arsize_bus[0], arburst_bus[0]})
+    .rm_vlid_i    (arvalid_bus[1]),
+    .rm_ready_o    (arready_bus[1]),
+    .rm_data_i     ({arid_bus[1], araddr_bus[1], arlen_bus[1], arsize_bus[1], arburst_bus[1]}),
+    .dt_valid_i     (arvalid_bus[0]),
+    .dt_ready_o     (arready_bus[0]),
+    .dt_data_i      ({arid_bus[0], araddr_bus[0], arlen_bus[0], arsize_bus[0], arburst_bus[0]})
 );
 
 SGDMAC_DESCRIPTOR_FETCHER i2 (
     .clk            (clk),
     .rst_n          (rst_n),
-    .start_pointer_i(cfg_start_ptr),
-    .start_i        (cfg_trigger),
+    .pointer_i      (cfg_ptr),
+    .start_i        (cfg_starter),
     .done_o         (dt_done),
-    .arid_o         (),
     .araddr_o       (araddr_bus[0]),
     .arlen_o        (arlen_bus[0]),
     .arsize_o       (arsize_bus[0]),
     .arburst_o      (arburst_bus[0]),
     .arvalid_o      (arvalid_bus[0]),
     .arready_i      (arready_bus[0]),
-    .rid_i          (),
     .rdata_i        (rdata_i),
     .rresp_i        (rresp_i),
     .rlast_i        (rlast_i),
     .rvalid_i       (rvalid_i),
     .rready_o       (rready_bus[0]),
-    .afull_i        (),
     .wren_o         (cmd_wr_en),
     .wdata_o        (cmd_wr_data),
     .rw_o           (cmd_rw)
@@ -203,7 +198,7 @@ SGDMAC_FIFO #(
 SGDMAC_FIFO #(
     .FIFO_DEPTH     (DEPTH),
     .DATA_WIDTH     (32),
-    .AFULL_THRESHOLD(DEPTH),  // Same as original!
+    .AFULL_THRESHOLD(DEPTH),
     .AEMPTY_THRESHOLD(0)
 ) i5 (
     .clk    (clk),
@@ -222,16 +217,13 @@ SGDMAC_FIFO #(
 SGDMAC_READ #(.FIFO_DEPTH(DEPTH)) i6 (
     .clk        (clk),
     .rst_n      (rst_n),
-    .arid_o     (),
     .araddr_o   (araddr_bus[1]),
     .arlen_o    (arlen_bus[1]),
     .arsize_o   (arsize_bus[1]),
     .arburst_o  (arburst_bus[1]),
     .arvalid_o  (arvalid_bus[1]),
     .arready_i  (arready_bus[1]),
-    .rid_i      (),
     .rdata_i    (rdata_i),
-    .rresp_i    (rresp_i),
     .rlast_i    (rlast_i),
     .rvalid_i   (rvalid_i),
     .rready_o   (rready_bus[1]),
@@ -248,7 +240,6 @@ SGDMAC_READ #(.FIFO_DEPTH(DEPTH)) i6 (
 SGDMAC_WRITE #(.FIFO_DEPTH(DEPTH)) i7 (
     .clk        (clk),
     .rst_n      (rst_n),
-    .awid_o     (),
     .awaddr_o   (awaddr_o),
     .awlen_o    (awlen_o),
     .awsize_o   (awsize_o),
@@ -261,8 +252,6 @@ SGDMAC_WRITE #(.FIFO_DEPTH(DEPTH)) i7 (
     .wlast_o    (wlast_o),
     .wvalid_o   (wvalid_o),
     .wready_i   (wready_i),
-    .bid_i      (),
-    .bresp_i    (bresp_i),
     .bvalid_i   (bvalid_i),
     .bready_o   (bready_o),
     .start_i    (wr_en),
