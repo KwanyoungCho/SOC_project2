@@ -1,0 +1,4 @@
+-sverilog $LAB_PATH/RTL/SGDMAC_FIFO.sv
+-sverilog $LAB_PATH/RTL/SGDMAC_TOP.sv
+-sverilog $LAB_PATH/RTL/SGDMAC_CFG.sv
+-sverilog $LAB_PATH/RTL/SGDMAC_ARBITER.sv
